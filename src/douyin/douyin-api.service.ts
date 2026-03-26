@@ -18,7 +18,7 @@ export class DouyinApiService {
   constructor(private readonly configService: ConfigService) {
     const userAgent =
       this.configService.get<string>('douyin.userAgent') ||
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
     const timeoutMs = Number(this.configService.get<number>('douyin.timeoutMs') || 25000);
     const cookie = this.configService.get<string>('douyin.cookie') || undefined;
 
@@ -158,7 +158,7 @@ export class DouyinApiService {
   private async fetchAllVideosByPuppeteer(userIdentifier: string): Promise<ScrapeVideoItem[]> {
     const userAgent =
       this.configService.get<string>('douyin.userAgent') ||
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
     const timeoutMs = Number(this.configService.get<number>('douyin.timeoutMs') || 25000);
     const cookie = this.configService.get<string>('douyin.cookie') || '';
 
@@ -170,9 +170,16 @@ export class DouyinApiService {
     try {
       const page = await browser.newPage();
       await page.setUserAgent(userAgent);
-      await page.setExtraHTTPHeaders({
-        Referer: 'https://www.douyin.com/',
-      });
+      await page.setExtraHTTPHeaders(
+        cookie
+          ? {
+              Referer: 'https://www.douyin.com/',
+              Cookie: cookie,
+            }
+          : {
+              Referer: 'https://www.douyin.com/',
+            },
+      );
 
       if (cookie) {
         const cookiePairs = cookie
@@ -205,6 +212,8 @@ export class DouyinApiService {
         waitUntil: 'networkidle2',
         timeout: timeoutMs,
       });
+
+      await new Promise((resolve) => setTimeout(resolve, 5000));
 
       const allItems: ScrapeVideoItem[] = [];
       let maxCursor = '0';
@@ -305,6 +314,10 @@ export class DouyinApiService {
           return;
         }
 
+        if (response.request().method() !== 'GET') {
+          return;
+        }
+
         const responseUrl = new URL(response.url());
         const cursor = responseUrl.searchParams.get('max_cursor') || '0';
         if (cursor !== expectedCursor) {
@@ -312,12 +325,18 @@ export class DouyinApiService {
         }
 
         try {
-          const json = await response.json();
+          const contentType = (response.headers()['content-type'] || '').toLowerCase();
+          if (!contentType.includes('application/json')) {
+            return;
+          }
+
+          const text = await response.text();
+          const json = JSON.parse(text);
           cleanup();
           resolve(json);
         } catch (err) {
-          cleanup();
-          reject(err);
+          // Some intercepted responses can have no retrievable body. Keep listening.
+          return;
         }
       };
 

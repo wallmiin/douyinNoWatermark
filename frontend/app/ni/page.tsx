@@ -4,13 +4,16 @@ import { FormEvent, useMemo, useState } from 'react';
 
 type VideoItem = {
   aweme_id: string;
-  file_path: string;
+  download_url: string;
   desc: string;
-  created_at: string;
+  created_at: number;
 };
 
 type ApiPayload = {
   total: number;
+  downloaded: number;
+  skipped: number;
+  failed: number;
   videos: VideoItem[];
   message?: string;
 };
@@ -19,15 +22,17 @@ export default function NiPage(): JSX.Element {
   const [profile, setProfile] = useState('');
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
-  const [total, setTotal] = useState<number | null>(null);
+  const [summary, setSummary] = useState<{
+    total: number;
+    downloaded: number;
+    skipped: number;
+    failed: number;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isBulkDownloading, setIsBulkDownloading] = useState(false);
   const [error, setError] = useState('');
 
-  const apiBase = useMemo(() => 'http://localhost:3000', []);
-
-  const buildPreviewUrl = (filePath: string): string => `${apiBase}${filePath}`;
-  const buildDownloadUrl = (awemeId: string): string => `${apiBase}/download/${awemeId}`;
+  const apiBase = useMemo(() => 'http://localhost:3001', []);
 
   const toggleVideoSelection = (awemeId: string): void => {
     setSelectedVideos((prev) =>
@@ -43,9 +48,9 @@ export default function NiPage(): JSX.Element {
     setSelectedVideos([]);
   };
 
-  const triggerDownload = (awemeId: string): void => {
+  const triggerDownload = (url: string, awemeId: string): void => {
     const link = document.createElement('a');
-    link.href = buildDownloadUrl(awemeId);
+    link.href = url;
     link.download = `${awemeId}.mp4`;
     link.target = '_blank';
     link.rel = 'noreferrer';
@@ -64,7 +69,12 @@ export default function NiPage(): JSX.Element {
     setIsBulkDownloading(true);
     try {
       for (const awemeId of selectedVideos) {
-        triggerDownload(awemeId);
+        const video = videos.find((item) => item.aweme_id === awemeId);
+        if (!video) {
+          continue;
+        }
+
+        triggerDownload(video.download_url, video.aweme_id);
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
     } finally {
@@ -79,7 +89,7 @@ export default function NiPage(): JSX.Element {
     if (!input) {
       setError('Vui long nhap link profile hoac user_id.');
       setVideos([]);
-      setTotal(null);
+      setSummary(null);
       return;
     }
 
@@ -87,21 +97,20 @@ export default function NiPage(): JSX.Element {
     setError('');
     setVideos([]);
     setSelectedVideos([]);
-    setTotal(null);
+    setSummary(null);
 
     try {
-      const url = `/api?profile=${encodeURIComponent(input)}`;
-      const response = await fetch(url, { method: 'GET' });
-      const text = await response.text();
+      const response = await fetch(`${apiBase}/download`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: input,
+        }),
+      });
 
-      let payload: ApiPayload | null = null;
-      if (text) {
-        try {
-          payload = JSON.parse(text) as ApiPayload;
-        } catch {
-          throw new Error('Backend tra ve sai dinh dang JSON.');
-        }
-      }
+      const payload = (await response.json()) as ApiPayload;
 
       if (!response.ok) {
         throw new Error(payload?.message || `API loi ${response.status}`);
@@ -110,7 +119,12 @@ export default function NiPage(): JSX.Element {
       const items = payload?.videos || [];
       setVideos(items);
       setSelectedVideos([]);
-      setTotal(payload?.total ?? 0);
+      setSummary({
+        total: payload?.total ?? 0,
+        downloaded: payload?.downloaded ?? 0,
+        skipped: payload?.skipped ?? 0,
+        failed: payload?.failed ?? 0,
+      });
       if (items.length === 0) {
         setError('Khong co du lieu');
       }
@@ -119,7 +133,7 @@ export default function NiPage(): JSX.Element {
       setError(message);
       setVideos([]);
       setSelectedVideos([]);
-      setTotal(null);
+      setSummary(null);
     } finally {
       setIsLoading(false);
     }
@@ -129,7 +143,7 @@ export default function NiPage(): JSX.Element {
     <main className="page-shell">
       <section className="hero-card">
         <h1>Douyin Downloader No Watermark</h1>
-        <p>Nhap profile link hoac user_id. He thong chi dung file server local, khong phat link Douyin truc tiep.</p>
+        <p>Nhap profile link hoac user_id. He thong goi POST /download va tra ve danh sach videos de hien thi ngay.</p>
 
         <form className="control-row" onSubmit={submit}>
           <input
@@ -149,7 +163,14 @@ export default function NiPage(): JSX.Element {
           </div>
         )}
 
-        {total !== null && !isLoading && <div className="summary-row"><span>Total: {total}</span></div>}
+        {summary && !isLoading && (
+          <div className="summary-row">
+            <span>Total: {summary.total}</span>
+            <span>Downloaded: {summary.downloaded}</span>
+            <span>Skipped: {summary.skipped}</span>
+            <span>Failed: {summary.failed}</span>
+          </div>
+        )}
         {error && <div className="error-box">{error}</div>}
       </section>
 
@@ -180,7 +201,7 @@ export default function NiPage(): JSX.Element {
         {videos.map((video) => (
           <article key={video.aweme_id} className="video-card">
             <div className="thumb-wrap">
-              <video src={buildPreviewUrl(video.file_path)} controls preload="metadata" playsInline />
+              <video src={video.download_url} controls preload="metadata" playsInline />
             </div>
             <div className="video-content">
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -192,14 +213,10 @@ export default function NiPage(): JSX.Element {
                 Chon video
               </label>
               <h3>{video.desc || 'No description'}</h3>
-              <p>{new Date(video.created_at).toLocaleString()}</p>
-              <button
-                type="button"
-                onClick={() => triggerDownload(video.aweme_id)}
-                disabled={isBulkDownloading}
-              >
-                Download
-              </button>
+              <p>{new Date(video.created_at * 1000).toLocaleString()}</p>
+              <a href={video.download_url} download={`${video.aweme_id}.mp4`} target="_blank" rel="noreferrer">
+                Tai xuong
+              </a>
             </div>
           </article>
         ))}

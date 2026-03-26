@@ -25,11 +25,10 @@ async function bootstrap(): Promise<void> {
   const downloadRoot = path.resolve(process.env.DOWNLOAD_ROOT || './downloads');
   app.use('/downloads', express.static(downloadRoot));
 
-  const port = Number(process.env.PORT || 3000);
-  await app.listen(port);
+  await app.listen(3001);
 
   const logger = new Logger('Bootstrap');
-  logger.log(`API server started at http://localhost:${port}`);
+  logger.log('API server started at http://localhost:3001');
 }
 
 bootstrap().catch((err: Error) => {

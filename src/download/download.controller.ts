@@ -9,11 +9,9 @@ import {
   Post,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
 import { createReadStream } from 'fs';
 import { Request, Response } from 'express';
-import { ApiKeyGuard } from '../auth/api-key.guard';
 import { UsageInfo } from '../auth/api-key.types';
 import {
   DownloadApiResponse,
@@ -30,7 +28,6 @@ export class DownloadController {
   constructor(private readonly downloadService: DownloadService) {}
 
   @Get('me')
-  @UseGuards(ApiKeyGuard)
   getMe(@Req() req: Request & { usageInfo?: UsageInfo }): { usage: UsageInfo | null } {
     return { usage: req.usageInfo || null };
   }
@@ -43,7 +40,6 @@ export class DownloadController {
 
   @Post('download')
   @HttpCode(200)
-  @UseGuards(ApiKeyGuard)
   async download(@Body() body: DownloadRequestBody): Promise<DownloadApiResponse> {
     const input = String(body?.url || '').trim();
     if (!input) {

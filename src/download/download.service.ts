@@ -21,6 +21,12 @@ export interface DownloadApiResponse {
   downloaded: number;
   skipped: number;
   failed: number;
+  videos: Array<{
+    aweme_id: string;
+    download_url: string;
+    desc: string;
+    created_at: number;
+  }>;
   files: DownloadFileResponseItem[];
 }
 
@@ -49,6 +55,12 @@ export class DownloadService {
       downloaded: summary.downloaded,
       skipped: summary.skipped,
       failed: summary.failed,
+      videos: summary.items.map((item) => ({
+        aweme_id: item.aweme_id,
+        download_url: item.playUrl,
+        desc: item.desc,
+        created_at: item.create_time,
+      })),
       files: summary.files.map((item: DownloadedFileItem) => ({
         aweme_id: item.aweme_id,
         file_path: item.file_path,

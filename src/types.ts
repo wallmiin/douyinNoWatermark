@@ -33,6 +33,7 @@ export interface RunSummary {
   skipped: number;
   failed: number;
   files: DownloadedFileItem[];
+  items: RunSummaryItem[];
 }
 
 export interface DownloadedFileItem {
@@ -40,4 +41,11 @@ export interface DownloadedFileItem {
   file_path: string;
   desc: string;
   created_at: string;
+}
+
+export interface RunSummaryItem {
+  aweme_id: string;
+  desc: string;
+  create_time: number;
+  playUrl: string;
 }

@@ -1,8 +1,7 @@
-import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ApiController } from './api/api.controller';
 import { ApiKeyGuard } from './auth/api-key.guard';
-import { ApiKeyHeaderMiddleware } from './auth/api-key-header.middleware';
 import { ApiKeyService } from './auth/api-key.service';
 import { appConfig } from './config';
 import { DownloadController } from './download/download.controller';
@@ -37,9 +36,5 @@ import { ScraperOrchestratorService } from './scraper-orchestrator.service';
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     consumer.apply(RequestLoggingMiddleware).forRoutes('*');
-    consumer.apply(ApiKeyHeaderMiddleware).forRoutes(
-      { path: 'download', method: RequestMethod.POST },
-      { path: 'me', method: RequestMethod.GET },
-    );
   }
 }
