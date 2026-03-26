@@ -1,92 +1,66 @@
-# Douyin No-Watermark Downloader Platform
+# Douyin Profile Video Downloader (No Watermark)
 
-Backend NestJS + frontend Next.js for fetching no-watermark Douyin video URLs from profile link or user_id.
+Production-oriented NestJS + BullMQ tool to download **all videos from a Douyin profile** using `video.play_addr.url_list` only.
 
-## Core Rule (No Watermark)
+## Key Rules Enforced
 
-- Use only `video.play_addr.url_list`
-- Never use `video.download_addr`
-- Any URL containing `playwm` is rejected
+- Uses `video.play_addr.url_list` as source URL.
+- Does **not** use `video.download_addr`.
+- Rejects candidates that look like watermark links (`playwm`, `watermark`, `logo`, etc.).
+- Stores files locally at `downloads/{sec_user_id}/{aweme_id}.mp4`.
 
-## Architecture
+## Stack
 
-- Backend: NestJS + Axios + BullMQ + Redis
-- Frontend: Next.js
-- Optional anti-bot fallback: Puppeteer
-
-## API
-
-### `POST /download`
-
-Request body:
-
-```json
-{
-  "url": "https://www.douyin.com/user/... or 43256206108"
-}
-```
-
-Response:
-
-```json
-{
-  "videos": [
-    {
-      "aweme_id": "...",
-      "download_url": "...",
-      "desc": "...",
-      "created_at": "...",
-      "thumbnail": "..."
-    }
-  ]
-}
-```
-
-### Backend features added
-
-- Input auto-detect URL or numeric user_id
-- Request logging middleware
-- Global error handling filter
-- Rate limit: 20 requests per minute per IP
+- Node.js + NestJS (application context)
+- Axios (HTTP)
+- BullMQ + Redis (queue/retry/concurrency)
+- Optional Puppeteer dependency installed for future anti-bot fallback
 
 ## Setup
 
-### 1. Backend
+1. Install Redis and ensure it is running.
+2. Install dependencies:
 
 ```bash
 npm install
+```
+
+3. Create env file:
+
+```bash
 copy .env.example .env
-npm run start:api
 ```
 
-Backend default URL: `http://localhost:3000`
+4. Put your Douyin cookie into `DOUYIN_COOKIE` (highly recommended).
 
-### 2. Frontend
+## Run
 
 ```bash
-npm run install:web
-copy frontend/.env.example frontend/.env.local
-npm run start:web
+node app.js --profile="https://www.douyin.com/user/xxxxx"
 ```
 
-Frontend default URL: `http://localhost:3001`
+## Output
 
-If backend runs on a different host/port, update `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`.
+CLI prints:
 
-## Existing CLI downloader (still available)
+- Total video
+- Queued
+- Downloaded
+- Skipped
+- Failed
 
-```bash
-node app.js --profile="https://www.douyin.com/user/..."
-```
+## Resume / Skip / Metadata
 
-or
+- Existing files are skipped automatically.
+- `metadata.json` is written to `downloads/{sec_user_id}/metadata.json`.
+- You can rerun the same profile safely; tool resumes from local files.
 
-```bash
-node app.js --profile="43256206108"
-```
+## Notes for Stability
 
-## Notes
+- Random delay 1-3s is applied between paginated API calls.
+- Browser-like headers are sent (`User-Agent`, `Referer`, optional `Cookie`).
+- Queue retry policy: 3 attempts with exponential backoff.
 
-- Redis is required for queue-based downloading.
-- For production stability, provide valid Douyin cookie in `.env`.
-- Douyin web API may change; refresh cookie/user-agent when needed.
+## Important
+
+Douyin internal web APIs may change signatures or anti-bot checks over time. If API starts rejecting requests, refresh cookie and user-agent first.

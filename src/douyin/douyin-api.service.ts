@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import puppeteer from 'puppeteer';
-import type { HTTPResponse, Page } from 'puppeteer';
+import { AppConfig } from '../config';
 import { ScrapeVideoItem } from '../types';
 import { isWatermarkedUrl, randomDelay } from '../utils';
 
@@ -18,7 +18,7 @@ export class DouyinApiService {
   constructor(private readonly configService: ConfigService) {
     const userAgent =
       this.configService.get<string>('douyin.userAgent') ||
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
     const timeoutMs = Number(this.configService.get<number>('douyin.timeoutMs') || 25000);
     const cookie = this.configService.get<string>('douyin.cookie') || undefined;
 
@@ -66,50 +66,13 @@ export class DouyinApiService {
   }
 
   async fetchAllVideos(userIdentifier: string): Promise<ScrapeVideoItem[]> {
-    const fallbackAttempts = 3;
-
     try {
-      const items = await this.fetchAllVideosByAxios(userIdentifier);
-      if (items.length > 0) {
-        return items;
-      }
-
-      throw new Error('Axios API path returned empty list.');
+      return await this.fetchAllVideosByAxios(userIdentifier);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Axios API path failed, switching to Puppeteer fallback: ${message}`);
+      return this.fetchAllVideosByPuppeteer(userIdentifier);
     }
-
-    let lastError: string | null = null;
-    for (let attempt = 1; attempt <= fallbackAttempts; attempt += 1) {
-      try {
-        console.log('Using Puppeteer fallback...');
-        const items = await this.fetchAllVideosByPuppeteer(userIdentifier);
-        console.log('Fetched videos:', items.length);
-
-        if (items.length > 0) {
-          return items;
-        }
-
-        this.logger.warn(
-          `Puppeteer fallback attempt ${attempt}/${fallbackAttempts} returned empty list.`,
-        );
-      } catch (fallbackError) {
-        lastError = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-        this.logger.warn(
-          `Puppeteer fallback attempt ${attempt}/${fallbackAttempts} failed: ${lastError}`,
-        );
-      }
-
-      if (attempt < fallbackAttempts) {
-        await randomDelay(2000, 2000);
-      }
-    }
-
-    this.logger.error(
-      `Puppeteer fallback exhausted after ${fallbackAttempts} attempts. Last error: ${lastError || 'n/a'}`,
-    );
-    throw new Error('Puppeteer fallback returned empty after retries.');
   }
 
   private async fetchAllVideosByAxios(userIdentifier: string): Promise<ScrapeVideoItem[]> {
@@ -129,16 +92,12 @@ export class DouyinApiService {
         const playUrls = Array.isArray(item?.video?.play_addr?.url_list)
           ? item.video.play_addr.url_list.map((u: unknown) => String(u))
           : [];
-        const thumbnail =
-          Array.isArray(item?.video?.cover?.url_list) && item.video.cover.url_list.length > 0
-            ? String(item.video.cover.url_list[0])
-            : '';
 
         if (!awemeId || playUrls.length === 0) {
           continue;
         }
 
-        allItems.push({ awemeId, desc, createTime, playUrls, thumbnail });
+        allItems.push({ awemeId, desc, createTime, playUrls });
       }
 
       hasMore = Boolean(data?.has_more);
@@ -148,38 +107,27 @@ export class DouyinApiService {
       );
     }
 
-    if (allItems.length === 0) {
-      throw new Error('Axios API returned 0 items.');
-    }
-
     return allItems;
   }
 
   private async fetchAllVideosByPuppeteer(userIdentifier: string): Promise<ScrapeVideoItem[]> {
     const userAgent =
       this.configService.get<string>('douyin.userAgent') ||
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
     const timeoutMs = Number(this.configService.get<number>('douyin.timeoutMs') || 25000);
     const cookie = this.configService.get<string>('douyin.cookie') || '';
 
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
     try {
       const page = await browser.newPage();
       await page.setUserAgent(userAgent);
-      await page.setExtraHTTPHeaders(
-        cookie
-          ? {
-              Referer: 'https://www.douyin.com/',
-              Cookie: cookie,
-            }
-          : {
-              Referer: 'https://www.douyin.com/',
-            },
-      );
+      await page.setExtraHTTPHeaders({
+        Referer: 'https://www.douyin.com/',
+      });
 
       if (cookie) {
         const cookiePairs = cookie
@@ -206,23 +154,18 @@ export class DouyinApiService {
         );
       }
 
-      const warmupUrl = `https://www.douyin.com/user/${encodeURIComponent(userIdentifier)}`;
-
-      await page.goto(warmupUrl, {
-        waitUntil: 'networkidle2',
+      await page.goto('https://www.douyin.com/', {
+        waitUntil: 'domcontentloaded',
         timeout: timeoutMs,
       });
-
-      await new Promise((resolve) => setTimeout(resolve, 5000));
 
       const allItems: ScrapeVideoItem[] = [];
       let maxCursor = '0';
       let hasMore = true;
 
       while (hasMore) {
-        await randomDelay(2000, 2000);
-        const dataPromise = this.waitForPostApiResponse(page, timeoutMs, maxCursor);
-        await page.evaluate(
+        await randomDelay(1000, 3000);
+        const data = await page.evaluate(
           async (identifier: string, cursor: string) => {
             const isNumericUserId = /^\d+$/.test(identifier.trim());
             const params = new URLSearchParams({
@@ -247,18 +190,26 @@ export class DouyinApiService {
               params.set('sec_user_id', identifier);
             }
 
-            await fetch(`https://www.douyin.com/aweme/v1/web/aweme/post/?${params.toString()}`, {
-              method: 'GET',
-              credentials: 'include',
-              headers: {
-                Accept: 'application/json, text/plain, */*',
+            const resp = await fetch(
+              `https://www.douyin.com/aweme/v1/web/aweme/post/?${params.toString()}`,
+              {
+                method: 'GET',
+                credentials: 'include',
+                headers: {
+                  Accept: 'application/json, text/plain, */*',
+                },
               },
-            });
+            );
+
+            if (!resp.ok) {
+              throw new Error(`Puppeteer fetch failed: HTTP ${resp.status}`);
+            }
+
+            return resp.json();
           },
           userIdentifier,
           maxCursor,
         );
-        const data = await dataPromise;
 
         const awemeList = Array.isArray(data?.aweme_list) ? data.aweme_list : [];
         for (const item of awemeList) {
@@ -268,28 +219,19 @@ export class DouyinApiService {
           const playUrls = Array.isArray(item?.video?.play_addr?.url_list)
             ? item.video.play_addr.url_list.map((u: unknown) => String(u))
             : [];
-          const thumbnail =
-            Array.isArray(item?.video?.cover?.url_list) && item.video.cover.url_list.length > 0
-              ? String(item.video.cover.url_list[0])
-              : '';
 
           if (!awemeId || playUrls.length === 0) {
             continue;
           }
 
-          allItems.push({ awemeId, desc, createTime, playUrls, thumbnail });
+          allItems.push({ awemeId, desc, createTime, playUrls });
         }
 
-        console.log('Fetched videos:', allItems.length);
         hasMore = Boolean(data?.has_more);
         maxCursor = String(data?.max_cursor || '0');
         this.logger.log(
           `[Puppeteer] Fetched page: items=${awemeList.length}, total=${allItems.length}, hasMore=${hasMore}, max_cursor=${maxCursor}`,
         );
-      }
-
-      if (allItems.length === 0) {
-        throw new Error('Puppeteer returned 0 videos.');
       }
 
       return allItems;
@@ -298,68 +240,12 @@ export class DouyinApiService {
     }
   }
 
-  private async waitForPostApiResponse(
-    page: Page,
-    timeoutMs: number,
-    expectedCursor: string,
-  ): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        reject(new Error('Timed out waiting for /aweme/v1/web/aweme/post/ response.'));
-      }, timeoutMs);
-
-      const onResponse = async (response: HTTPResponse): Promise<void> => {
-        if (!response.url().includes('/aweme/v1/web/aweme/post/')) {
-          return;
-        }
-
-        if (response.request().method() !== 'GET') {
-          return;
-        }
-
-        const responseUrl = new URL(response.url());
-        const cursor = responseUrl.searchParams.get('max_cursor') || '0';
-        if (cursor !== expectedCursor) {
-          return;
-        }
-
-        try {
-          const contentType = (response.headers()['content-type'] || '').toLowerCase();
-          if (!contentType.includes('application/json')) {
-            return;
-          }
-
-          const text = await response.text();
-          const json = JSON.parse(text);
-          cleanup();
-          resolve(json);
-        } catch (err) {
-          // Some intercepted responses can have no retrievable body. Keep listening.
-          return;
-        }
-      };
-
-      const cleanup = (): void => {
-        clearTimeout(timer);
-        page.off('response', onResponse);
-      };
-
-      page.on('response', onResponse);
-    });
-  }
-
   pickNoWatermarkUrl(urls: string[]): string | null {
-    const first = urls[0] ? String(urls[0]) : '';
-    if (!first) {
+    if (urls.length === 0) {
       return null;
     }
 
-    if (isWatermarkedUrl(first)) {
-      return null;
-    }
-
-    return first;
+    return urls[0];
   }
 
   private async fetchPostPage(userIdentifier: string, maxCursor: string): Promise<any> {

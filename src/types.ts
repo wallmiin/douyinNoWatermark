@@ -3,7 +3,6 @@ export interface ScrapeVideoItem {
   desc: string;
   createTime: number;
   playUrls: string[];
-  thumbnail: string;
 }
 
 export interface DownloadJobPayload {
@@ -32,20 +31,4 @@ export interface RunSummary {
   downloaded: number;
   skipped: number;
   failed: number;
-  files: DownloadedFileItem[];
-  items: RunSummaryItem[];
-}
-
-export interface DownloadedFileItem {
-  aweme_id: string;
-  file_path: string;
-  desc: string;
-  created_at: string;
-}
-
-export interface RunSummaryItem {
-  aweme_id: string;
-  desc: string;
-  create_time: number;
-  playUrl: string;
 }

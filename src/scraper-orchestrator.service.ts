@@ -6,23 +6,7 @@ import * as path from 'path';
 import { DouyinApiService } from './douyin/douyin-api.service';
 import { QueueService } from './queue/queue.service';
 import { MetadataService } from './storage/metadata.service';
-import { DownloadedFileItem, MetadataItem, RunSummary, RunSummaryItem } from './types';
-
-interface DownloadWorkerResult {
-  aweme_id: string;
-  file_path: string;
-  desc: string;
-  created_at: string;
-}
-
-interface QueuedJobContext {
-  job: Awaited<ReturnType<QueueService['queue']['add']>>;
-  awemeId: string;
-  desc: string;
-  createTime: number;
-  outputPath: string;
-  selectedUrl: string;
-}
+import { MetadataItem, RunSummary } from './types';
 
 @Injectable()
 export class ScraperOrchestratorService {
@@ -35,18 +19,13 @@ export class ScraperOrchestratorService {
     private readonly metadataService: MetadataService,
   ) {}
 
-  async run(profileUrl: string, options?: { force?: boolean }): Promise<RunSummary> {
-    const force = Boolean(options?.force);
+  async run(profileUrl: string): Promise<RunSummary> {
     const downloadRoot = this.configService.get<string>('downloadRoot') || './downloads';
     const secUserId = await this.douyinApiService.resolveUserId(profileUrl);
 
     this.logger.log(`Resolved profile to sec_user_id=${secUserId}`);
 
     const videos = await this.douyinApiService.fetchAllVideos(secUserId);
-    if (videos.length === 0) {
-      throw new Error('Fetch failed');
-    }
-
     if (videos.length > 0) {
       this.logger.log(
         `Debug first video playUrls: ${JSON.stringify(videos[0].playUrls)}`,
@@ -62,10 +41,7 @@ export class ScraperOrchestratorService {
     let queued = 0;
     let skipped = 0;
     let failed = 0;
-    let downloaded = 0;
-    const files: DownloadedFileItem[] = [];
-    const items: RunSummaryItem[] = [];
-    const queuedJobs: QueuedJobContext[] = [];
+    const waitedPromises: Promise<unknown>[] = [];
 
     await this.queueService.queue.drain(true);
     await this.queueService.queue.clean(0, 1000, 'failed');
@@ -92,21 +68,8 @@ export class ScraperOrchestratorService {
         continue;
       }
 
-      items.push({
-        aweme_id: video.awemeId,
-        desc: video.desc,
-        create_time: video.createTime,
-        playUrl: selectedUrl,
-      });
-
-      if (!force && existsSync(outputPath)) {
+      if (existsSync(outputPath)) {
         skipped += 1;
-        files.push({
-          aweme_id: video.awemeId,
-          file_path: this.toApiFilePath(outputPath),
-          desc: video.desc,
-          created_at: new Date(video.createTime * 1000).toISOString(),
-        });
         metadata[video.awemeId] = this.buildMetadata(
           video.awemeId,
           video.desc,
@@ -134,73 +97,47 @@ export class ScraperOrchestratorService {
       );
 
       queued += 1;
-      queuedJobs.push({
-        job,
-        awemeId: video.awemeId,
-        desc: video.desc,
-        createTime: video.createTime,
-        outputPath,
-        selectedUrl,
-      });
+      waitedPromises.push(
+        job
+          .waitUntilFinished(this.queueService.queueEvents)
+          .then(() => {
+            metadata[video.awemeId] = this.buildMetadata(
+              video.awemeId,
+              video.desc,
+              video.createTime,
+              outputPath,
+              selectedUrl,
+              'downloaded',
+            );
+          })
+          .catch((err: Error) => {
+            failed += 1;
+            metadata[video.awemeId] = this.buildMetadata(
+              video.awemeId,
+              video.desc,
+              video.createTime,
+              outputPath,
+              selectedUrl,
+              'failed',
+              err.message,
+            );
+          }),
+      );
     }
 
-    const results = await Promise.allSettled(
-      queuedJobs.map((item) =>
-        item.job.waitUntilFinished(this.queueService.queueEvents) as Promise<DownloadWorkerResult>,
-      ),
-    );
-
-    results.forEach((result, index) => {
-      const context = queuedJobs[index];
-      if (!context) {
-        return;
-      }
-
-      if (result.status === 'fulfilled') {
-        downloaded += 1;
-        files.push(result.value);
-        metadata[context.awemeId] = this.buildMetadata(
-          context.awemeId,
-          context.desc,
-          context.createTime,
-          context.outputPath,
-          context.selectedUrl,
-          'downloaded',
-        );
-        return;
-      }
-
-      failed += 1;
-      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      metadata[context.awemeId] = this.buildMetadata(
-        context.awemeId,
-        context.desc,
-        context.createTime,
-        context.outputPath,
-        context.selectedUrl,
-        'failed',
-        reason,
-      );
-    });
+    await Promise.allSettled(waitedPromises);
 
     await this.metadataService.write(metadataPath, metadata);
 
     const summary: RunSummary = {
       totalVideos: videos.length,
       queued,
-      downloaded,
+      downloaded: Object.values(metadata).filter((x) => x.status === 'downloaded').length,
       skipped,
       failed,
-      files,
-      items,
     };
 
     return summary;
-  }
-
-  private toApiFilePath(absolutePath: string): string {
-    const relative = path.relative(process.cwd(), absolutePath).replace(/\\/g, '/');
-    return `/${relative}`;
   }
 
   private buildMetadata(

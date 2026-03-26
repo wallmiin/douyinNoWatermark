@@ -9,13 +9,6 @@ import { DownloadJobPayload } from '../types';
 import { isWatermarkedUrl } from '../utils';
 import { QueueService } from './queue.service';
 
-interface DownloadWorkerResult {
-  aweme_id: string;
-  file_path: string;
-  desc: string;
-  created_at: string;
-}
-
 @Injectable()
 export class DownloadWorkerService implements OnModuleDestroy {
   private readonly logger = new Logger(DownloadWorkerService.name);
@@ -52,11 +45,9 @@ export class DownloadWorkerService implements OnModuleDestroy {
     await this.worker.close();
   }
 
-  private async processJob(job: Job<DownloadJobPayload>): Promise<DownloadWorkerResult> {
-    const { playUrl, outputPath, awemeId, desc, createTime } = job.data;
+  private async processJob(job: Job<DownloadJobPayload>): Promise<{ skipped: boolean }> {
+    const { playUrl, outputPath, awemeId } = job.data;
     this.logger.log(`Downloading aweme_id=${awemeId} from URL: ${playUrl}`);
-    // eslint-disable-next-line no-console
-    console.log('Downloading:', playUrl);
 
     if (isWatermarkedUrl(playUrl)) {
       throw new Error(`Rejected watermark URL for aweme_id=${awemeId}`);
@@ -85,15 +76,6 @@ export class DownloadWorkerService implements OnModuleDestroy {
     });
 
     await rename(tempPath, outputPath);
-    // eslint-disable-next-line no-console
-    console.log('Saved:', outputPath);
-
-    const relativePath = path.relative(process.cwd(), outputPath).replace(/\\/g, '/');
-    return {
-      aweme_id: awemeId,
-      file_path: `/${relativePath}`,
-      desc,
-      created_at: new Date(createTime * 1000).toISOString(),
-    };
+    return { skipped: false };
   }
 }

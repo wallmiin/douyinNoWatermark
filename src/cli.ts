@@ -7,10 +7,6 @@ import { ScraperOrchestratorService } from './scraper-orchestrator.service';
 async function bootstrap(): Promise<void> {
   const argv = minimist(process.argv.slice(2));
   const profileInput = String(argv.profile || '').trim();
-  const force =
-    argv.force === true ||
-    String(argv.force || '').toLowerCase() === 'true' ||
-    String(argv.force || '') === '1';
 
   if (!profileInput) {
     throw new Error(
@@ -25,7 +21,7 @@ async function bootstrap(): Promise<void> {
 
   try {
     const orchestrator = app.get(ScraperOrchestratorService);
-    const summary = await orchestrator.run(profileInput, { force });
+    const summary = await orchestrator.run(profileInput);
 
     logger.log(`Total video: ${summary.totalVideos}`);
     logger.log(`Queued: ${summary.queued}`);
